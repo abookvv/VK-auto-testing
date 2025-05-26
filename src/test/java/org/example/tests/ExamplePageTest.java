@@ -56,6 +56,8 @@ public class ExamplePageTest {
         } catch (TimeoutException e) {
             System.out.println("Элемент не появился на странице в течение 30 секунд");
         }
+        String currentUrl = WebDriverRunner.url();
+        System.out.println("Текущий URL: " + currentUrl);
         assertTrue(WebDriverRunner.url().contains("/news") || WebDriverRunner.url().contains("/ru/news"),
                 "URL не содержит ожидаемый путь /news, текущий URL: " + WebDriverRunner.url());}
 }
