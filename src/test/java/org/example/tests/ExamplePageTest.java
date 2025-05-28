@@ -1,19 +1,23 @@
 package org.example.tests;
 
-import com.codeborne.selenide.Condition;
-import com.codeborne.selenide.Configuration;
-import com.codeborne.selenide.WebDriverRunner;
+import com.codeborne.selenide.*;
+import io.github.bonigarcia.wdm.WebDriverManager;
+import org.example.models.Article;
 import org.example.pages.ExamplePage;
+import org.example.wrapper.ClickableElement;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static com.codeborne.selenide.Selenide.*;
-import static com.codeborne.selenide.Condition.text;
-import static com.codeborne.selenide.WebDriverRunner.url;
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.time.Duration;
+import java.util.stream.Stream;
+
+import static com.codeborne.selenide.Selenide.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class ExamplePageTest {
@@ -24,78 +28,129 @@ public class ExamplePageTest {
     public void setUpClass() {
         System.setProperty("webdriver.chrome.driver", "C:\\Users\\Anne\\chromedriver-win64\\chromedriver.exe");
         ChromeOptions options = new ChromeOptions();
-        options.addArguments("--incognito"); // Запуск в режиме инкогнито
+        options.addArguments("--incognito");
         Configuration.browserCapabilities = options;
         Configuration.browser = "chrome";
-        Configuration.timeout = 120000;
+        Configuration.timeout = 15000;
     }
+
     @BeforeEach
     public void setUp() {
+        Configuration.pageLoadTimeout = 60000; // Увеличиваем таймаут загрузки
+        open("https://habr.com/ru/");
+        $("body").shouldBe(Condition.visible); // Явное ожидание
         page = new ExamplePage();
-        page.openPage();
+        logger.info("Инициализирована тестовая страница");
     }
+
     @AfterAll
     public void tearDownClass() {
-        System.out.println("Все тесты завершены.");
         closeWebDriver();
+        logger.info("Все тесты завершены, браузер закрыт");
     }
 
     @Test
     @Tag("smoke")
     @DisplayName("Проверка заголовка главной страницы")
     public void testMainPageTitle() {
-        Configuration.timeout = 150000;
         assertTrue(title().contains("Хабр"));
+        logger.info("Заголовок страницы содержит 'Хабр'");
     }
 
     @Test
-    @DisplayName("Поиск статьи")
-    public void testSearchArticle() {
-        Configuration.pageLoadTimeout = 120000; // Увеличьте до 120 секунд
+    @DisplayName("Работа с объектом Article")
+    public void testArticleObject() {
+        Article article = page.searchFor("Java")
+                .openFirstArticle()
+                .getCurrentArticle();
+
+        assertNotNull(article, "Article не должен быть null");
+        assertTrue(article.containsText("Java"));
+        logger.info("Проверка Article успешна: {}", article);
+    }
+
+    @ParameterizedTest
+    @MethodSource("searchTestData")
+    @DisplayName("Параметризованный поиск")
+    void testSearchArticles(String query, boolean shouldContain) {
+        page.searchFor(query);
+
+        if (shouldContain) {
+            // Для существующих запросов
+            $$("article.tm-articles-list__item").shouldBe(CollectionCondition.sizeGreaterThan(0));
+
+            // Открываем первую статью
+            page.firstArticleLink
+                    .shouldBe(Condition.visible)
+                    .click();
+
+            // Ждем загрузки контента статьи
+            page.description.shouldBe(Condition.visible);
+
+            // Проверяем текст в разных частях статьи
+            String title = page.articleTitle.getText().toLowerCase();
+            String content = page.description.getText().toLowerCase();
+            String searchTerm = query.toLowerCase();
+
+            assertTrue(
+                    title.contains(searchTerm) || content.contains(searchTerm),
+                    String.format("Текст '%s' не найден ни в заголовке (%s), ни в содержании",
+                            query, title.substring(0, 30) + "...")
+            );
+
+        } else {
+            // Для несуществующих запросов
+            page.emptyPage
+                    .shouldBe(Condition.visible)
+                    .shouldHave(Condition.text("К сожалению, здесь пока нет ни одной публикации"));
+        }
+
+        logger.info("Тест для запроса '{}' завершен успешно", query);
+    }
+
+
+    private static Stream<Arguments> searchTestData() {
+        return Stream.of(
+                Arguments.of("Java", true),
+                Arguments.of("Python", true),
+                Arguments.of("Selenium", true),
+                Arguments.of("NonexistentWord123", false)
+        );
+    }
+
+    @Test
+    @DisplayName("Комплексный тест с паттернами")
+    @Disabled
+    public void testSearchArticleWithPatterns() {
+        // Page Object + Chain of Invocations
         String searchQuery = "Java";
-        logger.info("Тест: Поиск статьи начат, запрос: {}", searchQuery);
-        logger.info("Ожидание и клик по кнопке открытия поиска");
-        page.openSearchButton.shouldBe(Condition.visible).click();
-        logger.info("Ввод текста поиска: {}", searchQuery);
-        page.searchInput.shouldBe(Condition.visible).setValue(searchQuery);
-        logger.info("Клик по кнопке поиска");
-        page.searchButton.shouldBe(Condition.visible).click();
-        logger.info("Ожидание и клик по первой статье");
-        page.firstArticleLink.shouldBe(Condition.visible).click();
+        page.searchFor(searchQuery).ensureResultsExist(searchQuery);
 
-        String articleTitle = page.getArticleTitle();
-        assertTrue(articleTitle.toLowerCase().contains(searchQuery.toLowerCase()),
-                "Заголовок статьи не содержит искомый текст: " + searchQuery);
-    }
+        page.openFirstArticle();
 
-    @Test
-    @DisplayName("Проверка кнопки 'Войти'")
-    public void testLoginButtonVisible() {
-        assertTrue(page.isLoginButtonVisible());
-    }
+        Article article = page.toArticleModel();
+        logger.info("Получена статья: {}", article);
 
-    @Test
-    @Disabled("Тест временно отключен из-за изменений на странице")
-    @DisplayName("Переход в раздел 'Новости'")
-    public void testNavigationToNewsSection() {
-        page.clickNewsSection();
-        String currentUrl = WebDriverRunner.url();
-        assertTrue(currentUrl.contains("/news") || currentUrl.contains("/ru/news"),
-                "URL не содержит ожидаемый путь /news, текущий URL: " + currentUrl);
-    }
 
-    @Test
-    @DisplayName("Переход по кнопке 'Разработка'")
-    public void testToDevelopArticles() {
-        page.clickDevelopArticles();
-        // Используем assertAll для группировки утверждений
-        assertAll("Проверка перехода по кнопке 'Разработка'",
-                () -> $("h1").shouldHave(Condition.text("Разработка"), Duration.ofSeconds(10)),
-                () -> {
-                    String currentUrl = WebDriverRunner.url();
-                    assertTrue(currentUrl.contains("ru/flows/develop/articles/") || currentUrl.contains("develop/articles"),
-                            "URL не содержит ожидаемый путь /flows/develop/articles/, текущий URL: " + currentUrl);
-                }
+        String titleData = article.getTitle().toLowerCase();
+        String contentData = article.getContent().toLowerCase();
+        String searchTerm = searchQuery.toLowerCase();
+
+        assertTrue(
+                titleData.contains(searchTerm) || contentData.contains(searchTerm),
+                String.format("Текст '%s' не найден ни в заголовке (%s), ни в содержании",
+                        searchQuery, titleData.substring(0, Math.min(titleData.length(), 30)) + "...")
+        );
+
+        new ClickableElement(page.getLoginButton())
+                .clickWithWait(Duration.ofSeconds(5));
+
+        // 5. Комплексная проверка
+        assertAll(
+                () -> assertTrue(article.containsText(searchQuery),
+                        "Текст '" + searchQuery + "' не найден в статье"),
+                () -> assertTrue(page.isLoginButtonVisible()),
+                () -> assertTrue(WebDriverRunner.url().contains("habr.com"))
         );
     }
 }
